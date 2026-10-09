@@ -68,6 +68,10 @@ type EnvConfigApp struct {
 	// instance serves. Defaults to ".github". Must not be empty; setting
 	// ORG_POLICY_REPO="" is rejected at startup.
 	OrgPolicyRepo string `envconfig:"ORG_POLICY_REPO" required:"false" default:".github"`
+	// OrgPolicyOnly, when true, refuses repository-scoped exchanges
+	// (scope "<org>/<repo>") other than for the org policy repo, so every
+	// trust policy must live in OrgPolicyRepo. Defaults to false.
+	OrgPolicyOnly bool `envconfig:"OCTOSTS_ORG_POLICY_ONLY" required:"false" default:"false"`
 }
 
 type EnvConfigWebhook struct {

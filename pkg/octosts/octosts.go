@@ -61,7 +61,7 @@ const (
 // GitHub installation tokens. router selects the per-org app pool; sticky (may
 // be nil) persists checks:write routing for check-run ownership across all
 // pools (installation IDs are globally unique within GitHub).
-func NewSecurityTokenServiceServer(router *ghinstall.OrgRouter, sticky stickystore.Store, apps AppSet, ceclient cloudevents.Client, domain string, metrics bool, baseURL string, orgPolicyRepo string, allowedIssuers []string) pboidc.SecurityTokenServiceServer {
+func NewSecurityTokenServiceServer(router *ghinstall.OrgRouter, sticky stickystore.Store, apps AppSet, ceclient cloudevents.Client, domain string, metrics bool, baseURL string, orgPolicyRepo string, allowedIssuers []string, orgPolicyOnly bool) pboidc.SecurityTokenServiceServer {
 	return &sts{
 		router:         router,
 		sticky:         sticky,
@@ -72,6 +72,7 @@ func NewSecurityTokenServiceServer(router *ghinstall.OrgRouter, sticky stickysto
 		baseURL:        baseURL,
 		orgPolicyRepo:  orgPolicyRepo,
 		allowedIssuers: allowedIssuers,
+		orgPolicyOnly:  orgPolicyOnly,
 	}
 }
 
@@ -143,6 +144,10 @@ type sts struct {
 	// allowedIssuers, when non-empty, confines OIDC discovery to these
 	// issuers. Empty means any issuer the trust policies allow.
 	allowedIssuers []string
+
+	// orgPolicyOnly refuses repository-scoped requests (other than for the
+	// org policy repo) so all trust policies must live in the org policy repo.
+	orgPolicyOnly bool
 
 	// orgIssuerFlight collapses concurrent org-allowlist lookups for the same
 	// owner into one enumeration. Its zero value is ready to use.
@@ -769,10 +774,15 @@ func (s *sts) lookupInstallAndTrustPolicy(ctx context.Context, scope, identity, 
 	var tp trustPolicy = &otp.TrustPolicy
 
 	owner, repo := path.Dir(scope), path.Base(scope)
+	repoScoped := owner != "."
 	if owner == "." {
 		owner, repo = repo, s.policyRepo()
 	} else {
 		otp.Repositories = []string{repo}
+	}
+
+	if s.orgPolicyOnly && repoScoped && repo != s.policyRepo() {
+		return nil, 0, nil, nil, status.Error(codes.PermissionDenied, "per-repository trust policies are disabled")
 	}
 
 	// If the repo is the org policy repo, then parse with an org policy even
