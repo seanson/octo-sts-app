@@ -93,6 +93,7 @@ It rejects the token before it reads the trust policy.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ORG_POLICY_REPO` | `.github` | Repository within the organization that holds the org-issuer allowlist. Must exist and be accessible to the App before enforcement takes effect. |
+| `OCTOSTS_ORG_POLICY_ONLY` | `false` | When `true`, exchanges for `scope=<org>/<repo>` are refused with `PermissionDenied` unless `<repo>` is `ORG_POLICY_REPO`, so every trust policy must live in the org policy repo. `scope=<org>` and `scope=<org>/<ORG_POLICY_REPO>` keep working. Trust policy files already committed in other repositories are ignored, not deleted. |
 
 > **Warning: migration hazard.** If you set `ORG_POLICY_REPO=my-policies` while
 > the allowlist is still in `.github`, octo-sts reads `my-policies` instead.
