@@ -383,6 +383,27 @@ func TestAppConfig(t *testing.T) {
 	}
 }
 
+func TestAppConfigOrgPolicyOnly(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		env  map[string]string
+		want bool
+	}{
+		{name: "default false", env: map[string]string{}, want: false},
+		{name: "true", env: map[string]string{"OCTOSTS_ORG_POLICY_ONLY": "true"}, want: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("STS_DOMAIN", "octo-sts-test.local")
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			cfg, err := AppConfig()
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, cfg.OrgPolicyOnly)
+		})
+	}
+}
+
 func TestWebhookConfig(t *testing.T) {
 	tests := []struct {
 		name    string

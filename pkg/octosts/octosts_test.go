@@ -447,6 +447,110 @@ func TestExchangeCustomOrgPolicyRepo(t *testing.T) {
 	}
 }
 
+// TestExchangeOrgPolicyOnly verifies that OCTOSTS_ORG_POLICY_ONLY refuses
+// repository-scoped exchanges other than for the org policy repo, and that the
+// same requests succeed with the switch off.
+func TestExchangeOrgPolicyOnly(t *testing.T) {
+	atr := newAppsTransport(t, newFakeGitHub())
+
+	pk, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("cannot generate RSA key %v", err)
+	}
+	signer, err := jose.NewSigner(jose.SigningKey{
+		Algorithm: jose.RS256,
+		Key:       pk,
+	}, nil)
+	if err != nil {
+		t.Fatalf("jose.NewSigner() = %v", err)
+	}
+
+	iss := "https://token.actions.githubusercontent.com"
+	token, err := josejwt.Signed(signer).Claims(josejwt.Claims{
+		Subject:  "foo",
+		Issuer:   iss,
+		Audience: josejwt.Audience{"octosts"},
+		Expiry:   josejwt.NewNumericDate(time.Now().Add(10 * time.Minute)),
+	}).Serialize()
+	if err != nil {
+		t.Fatalf("CompactSerialize failed: %v", err)
+	}
+	provider.AddTestKeySetVerifier(t, iss, &oidc.StaticKeySet{
+		PublicKeys: []crypto.PublicKey{pk.Public()},
+	})
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.MD{"authorization": []string{"Bearer " + token}})
+
+	pool := &ghinstall.OrgPool{
+		M:        &fakeInstallMgr{atr: atr},
+		AppCount: 1,
+	}
+	router := ghinstall.NewOrgRouter(map[string]*ghinstall.OrgPool{"org": pool})
+
+	perms := &github.InstallationPermissions{PullRequests: new("write")}
+
+	for _, tc := range []struct {
+		name     string
+		only     bool
+		scope    string
+		wantOpts *github.InstallationTokenOptions
+		wantMsg  string
+	}{{
+		name:     "on, org scope",
+		only:     true,
+		scope:    "org",
+		wantOpts: &github.InstallationTokenOptions{Permissions: perms},
+	}, {
+		name:    "on, repo scope refused",
+		only:    true,
+		scope:   "org/repo",
+		wantMsg: "per-repository trust policies are disabled",
+	}, {
+		name:     "on, org policy repo scope",
+		only:     true,
+		scope:    "org/.github",
+		wantOpts: &github.InstallationTokenOptions{Repositories: []string{".github"}, Permissions: perms},
+	}, {
+		name:     "off, repo scope",
+		scope:    "org/repo",
+		wantOpts: &github.InstallationTokenOptions{Repositories: []string{"repo"}, Permissions: perms},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, repo := range []string{".github", "repo"} {
+				key := cacheTrustPolicyKey{owner: "org", repo: repo, identity: "foo"}
+				trustPolicies.Remove(key)
+				t.Cleanup(func() { trustPolicies.Remove(key) })
+			}
+
+			sts := &sts{router: router, orgPolicyOnly: tc.only}
+			tok, err := sts.Exchange(ctx, &v1.ExchangeRequest{
+				Identity: "foo",
+				Scopes:   []string{tc.scope},
+			})
+			if tc.wantMsg != "" {
+				if status.Code(err) != codes.PermissionDenied || status.Convert(err).Message() != tc.wantMsg {
+					t.Fatalf("Exchange() = %v, want PermissionDenied %q", err, tc.wantMsg)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Exchange failed: %v", err)
+			}
+
+			b, err := base64.StdEncoding.DecodeString(tok.Token)
+			if err != nil {
+				t.Fatalf("DecodeString failed: %v", err)
+			}
+			got := new(github.InstallationTokenOptions)
+			if err := json.Unmarshal(b, got); err != nil {
+				t.Fatalf("Unmarshal failed: %v", err)
+			}
+			if diff := cmp.Diff(tc.wantOpts, got); diff != "" {
+				t.Error(diff)
+			}
+		})
+	}
+}
+
 func TestExchangeValidation(t *testing.T) {
 	ctx := context.Background()
 	atr := newAppsTransport(t, newFakeGitHub())
